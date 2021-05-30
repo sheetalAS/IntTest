@@ -1,0 +1,288 @@
+/*
+* Created on : 03/05/2021
+* Description: 
+1. System will check if price list item is updated then it will update Proposal line items, Agreement line items, Contract line items 
+if list price is different than List price on price list items
+Open points:
+- Find how to get list price in comparison to proposal line items against List price field
+- Update Proposal line items with required fields
+- Update Agreement with required fields
+- Update Agreement line items with required fields
+- Update Contract line items with required fields
+*/
+global class UpdatePricingDetailsOpsBatch implements Database.Batchable<sObject>{
+    
+    //Querying the price list item data and the records which are updated from last one day.
+    public Database.QueryLocator start(Database.BatchableContext BC){
+        return Database.getQueryLocator ([select id,LastModifiedDate,TargetPrice__c,Apttus_Config2__ListPrice__c,CreatedDate from Apttus_Config2__PriceListItem__c where LastModifiedDate >= LAST_N_DAYS:1  AND Apttus_Config2__PriceListId__r.Country__c !='' AND CreatedDate !=Yesterday]);
+    }
+    
+    public void execute(Database.BatchableContext BC, List<Apttus_Config2__PriceListItem__c> scope){
+        Map<Id,Apttus_Config2__PriceListItem__c> priceListMap=new Map<Id,Apttus_Config2__PriceListItem__c>();
+        List<Apttus_Proposal__Proposal_Line_Item__c> pliUpdate=new List<Apttus_Proposal__Proposal_Line_Item__c>();
+        List<Apttus__AgreementLineItem__c> aliUpdate=new List<Apttus__AgreementLineItem__c>();
+        Map<String,Apttus_Proposal__Proposal_Line_Item__c> propListMap=new Map<String,Apttus_Proposal__Proposal_Line_Item__c>();
+        List<Apttus__APTS_Agreement__c> agreementList=new List<Apttus__APTS_Agreement__c>();
+        Map<String,Apttus_Proposal__Proposal_Line_Item__c> contractPLIData=new Map<String,Apttus_Proposal__Proposal_Line_Item__c>();
+        List<Apttus_Config2__PriceListItem__c> contractList=new List<Apttus_Config2__PriceListItem__c>();
+        Set<id> priceListItemId=new Set<id>();
+        Set<id> agreementID=new Set<id>();
+        Set<id> proposalId=new Set<id>();
+        Set<id> contractPriceListId=new Set<id>();
+        Set<String> contractNumbers=new Set<String>();
+        String keyID;
+        String agliValidation;
+        String contractPLI;
+        System.debug('scope:'+scope.size());
+        for(Apttus_Config2__PriceListItem__c pli:scope){
+            priceListMap.put(pli.Id,pli);
+        }
+        
+        //Updating proposal line items with price list when the price list and NationalListPriceByEA are not equal
+        for(Apttus_Proposal__Proposal_Line_Item__c cli : [Select Id,Name,Apttus_Proposal__Proposal__r.Quote_Number__c,Apttus_Proposal__Proposal__c,NationalListPriceByEA__c,Apttus_QPConfig__PriceListItemId__c,Apttus_QPConfig__ListPrice__c,Apttus_QPConfig__AdjustmentAmount__c,Apttus_QPConfig__NetPrice__c,
+                                                           Apttus_QPConfig__AdjustedPrice__c,Apttus_QPConfig__DeltaPrice__c,Apttus_QPConfig__ExtendedPrice__c,Apttus_QPConfig__BaseExtendedPrice__c,Apttus_QPConfig__NetUnitPrice__c,
+                                                           NationalListPricebyEAFullDecimal__c,Apttus_QPConfig__BasePriceOverride__c,Apttus_QPConfig__Quantity2__c,Apttus_QPConfig__AdjustmentType__c,DiscountAgainstNLP__c,
+                                                           Apttus_QPConfig__BaseCostOverride__c,ContractPrice__c,Apttus_Proposal__Product__r.LOTSProductHierarchy__c,TargetPrice__c,Apttus_QPConfig__BasePrice__c,BasePriceDefinedNbOfDecimalPlaces__c,NetAdjustmentDefinedNbOfDecimalPlaces__c,
+                                                           NetPriceDefinedNbOfDecimalPlaces__c,NetPriceInclVATDefinedNbOfDecimalPlaces__c,NationalListPricebyEAFullSeparator__c,RevisedDiscountagainstNLPSeparator__c,RevisedDiscountagainstNLP__c,
+                                                           National_LPDefinedNbOfDecimalPlaces__c,VatRateSeparator__c,DisconActualLP__c
+                                                           from Apttus_Proposal__Proposal_Line_Item__c where Apttus_QPConfig__PriceListItemId__c in : priceListMap.keyset() AND ProductHierarchy__c=false AND DisconActualLP__c=True AND Apttus_QPConfig__AdjustmentType__c!='% Markup' AND ContractPrice__c=null AND Apttus_Proposal__Proposal__r.Apttus_Proposal__ExpectedEndDate__c > Today]){
+                                                              if((cli.Apttus_QPConfig__ListPrice__c != priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).Apttus_Config2__ListPrice__c) && (cli.TargetPrice__c == priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).TargetPrice__c)){
+                                                                  
+                                                                  //remove 
+                                                                  //checking price list items and proposal line items
+                                                                  if(cli.Apttus_QPConfig__ListPrice__c !=priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).Apttus_Config2__ListPrice__c){
+                                                                      cli.Apttus_QPConfig__ListPrice__c=(Decimal)priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).Apttus_Config2__ListPrice__c;
+                                                                      cli.Apttus_QPConfig__BasePrice__c=(Decimal)priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).Apttus_Config2__ListPrice__c;
+                                                                      cli.NationalListPriceByEA__c=(Decimal)priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).Apttus_Config2__ListPrice__c;
+                                                                      cli.TargetPrice__c=(Decimal)priceListMap.get(cli.Apttus_QPConfig__PriceListItemId__c).TargetPrice__c;   
+                                                                  }  
+                                                                  if(cli.Apttus_QPConfig__AdjustmentAmount__c != null && cli.Apttus_QPConfig__AdjustmentType__c == 'Base Price Override' && cli.Apttus_QPConfig__ListPrice__c != 0 ){
+                                                                      cli.DiscountAgainstNLP__c = ((cli.Apttus_QPConfig__ListPrice__c-cli.Apttus_QPConfig__AdjustmentAmount__c)/cli.Apttus_QPConfig__ListPrice__c)*100;
+                                                                      cli.NationalListPricebyEAFullDecimal__c =  cli.Apttus_QPConfig__ListPrice__c;
+                                                                  }
+                                                                  if(cli.Apttus_QPConfig__AdjustmentAmount__c == null && cli.Apttus_QPConfig__AdjustmentType__c == 'Base Price Override' && cli.Apttus_QPConfig__ListPrice__c != 0 ){
+                                                                      cli.Apttus_QPConfig__NetPrice__c = cli.Apttus_QPConfig__ListPrice__c*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__AdjustedPrice__c = cli.Apttus_QPConfig__ListPrice__c*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__DeltaPrice__c = cli.Apttus_QPConfig__ListPrice__c*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__ExtendedPrice__c = cli.Apttus_QPConfig__ListPrice__c *cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__BaseExtendedPrice__c = cli.Apttus_QPConfig__ListPrice__c *cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__NetUnitPrice__c = cli.Apttus_QPConfig__ListPrice__c;
+                                                                      cli.NationalListPricebyEAFullDecimal__c =  cli.Apttus_QPConfig__ListPrice__c;
+                                                                  } 
+                                                                  if(cli.Apttus_QPConfig__BaseCostOverride__c  == null && cli.ContractPrice__c  == null && cli.Apttus_QPConfig__AdjustmentType__c == '% Discount' && cli.Apttus_QPConfig__ListPrice__c != 0 ){
+                                                                      cli.Apttus_QPConfig__NetUnitPrice__c  = (cli.Apttus_QPConfig__ListPrice__c - ((cli.Apttus_QPConfig__ListPrice__c /100)*cli.Apttus_QPConfig__AdjustmentAmount__c));
+                                                                      
+                                                                  }
+                                                                  if(cli.Apttus_QPConfig__AdjustmentType__c == '% Discount' && cli.Apttus_QPConfig__BasePriceOverride__c == null && cli.ContractPrice__c == null && cli.Apttus_QPConfig__ListPrice__c != 0 ){
+                                                                      cli.Apttus_QPConfig__NetUnitPrice__c = (cli.Apttus_QPConfig__ListPrice__c - ((cli.Apttus_QPConfig__ListPrice__c /100)*cli.Apttus_QPConfig__AdjustmentAmount__c));
+                                                                      cli.Apttus_QPConfig__NetPrice__c = ((cli.Apttus_QPConfig__ListPrice__c - ((cli.Apttus_QPConfig__ListPrice__c /100)*cli.Apttus_QPConfig__AdjustmentAmount__c)))*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__AdjustedPrice__c = ((cli.Apttus_QPConfig__ListPrice__c - ((cli.Apttus_QPConfig__ListPrice__c /100)*cli.Apttus_QPConfig__AdjustmentAmount__c)))*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__DeltaPrice__c = ((cli.Apttus_QPConfig__ListPrice__c - ((cli.Apttus_QPConfig__ListPrice__c /100)*cli.Apttus_QPConfig__AdjustmentAmount__c)))*cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__ExtendedPrice__c = cli.Apttus_QPConfig__ListPrice__c *cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.Apttus_QPConfig__BaseExtendedPrice__c = cli.Apttus_QPConfig__ListPrice__c *cli.Apttus_QPConfig__Quantity2__c;
+                                                                      cli.NationalListPricebyEAFullDecimal__c =  cli.Apttus_QPConfig__ListPrice__c;
+                                                                  }
+                                                                  If(cli.Apttus_QPConfig__AdjustmentType__c == '% Discount' && cli.Apttus_Proposal__Product__r.LOTSProductHierarchy__c == true && cli.Apttus_QPConfig__ListPrice__c != 0){
+                                                                      cli.RevisedDiscountagainstNLP__c = cli.Apttus_QPConfig__AdjustmentAmount__c;
+                                                                  }
+                                                                  
+                                                                  If(cli.Apttus_QPConfig__AdjustmentType__c == '% Discount' && cli.Apttus_Proposal__Product__r.LOTSProductHierarchy__c == false && cli.NationalListPriceByEA__c !=0 && cli.Apttus_QPConfig__ListPrice__c != 0){
+                                                                      cli.RevisedDiscountagainstNLP__c = (100*(1 - (cli.Apttus_QPConfig__NetUnitPrice__c /cli.NationalListPriceByEA__c)));
+                                                                  }
+                                                                  pliUpdate.add(cli);
+                                                               
+                                                              }
+                                                               contractPLI=cli.Apttus_Proposal__Proposal__r.Quote_Number__c+''+cli.Apttus_Proposal__Product__c;
+                                                               proposalId.add(cli.Apttus_Proposal__Proposal__c);
+                                                               contractPLIData.put(contractPLI,cli);
+                                                               contractNumbers.add(cli.Apttus_Proposal__Proposal__r.Quote_Number__c);
+                                                               priceListItemId.add(cli.Apttus_QPConfig__PriceListItemId__c);
+                                                               keyID=cli.Apttus_Proposal__Proposal__c+''+cli.Apttus_Proposal__Product__c+''+cli.Apttus_QPConfig__AdjustmentType__c;
+                                                               propListMap.put(keyID,cli);
+                                                          }
+
+        System.debug('pliUpdate:'+pliUpdate);
+        System.debug('propListMap:'+propListMap);
+        System.debug('pliUpdate Size:'+pliUpdate.size());
+        System.debug('propListMap Size:'+propListMap.size());
+        if(!pliUpdate.isEmpty()){ 
+            update pliUpdate;
+        }
+        //Mapping the Proposal line Items with Proposal to update the agreement line items based on proposal line items data
+        /*for(Apttus_Proposal__Proposal_Line_Item__c cli1 : [Select Id,Name,Apttus_Proposal__Proposal__r.Quote_Number__c,Apttus_Proposal__Proposal__c,NationalListPriceByEA__c,Apttus_QPConfig__PriceListItemId__c,Apttus_QPConfig__ListPrice__c,Apttus_QPConfig__AdjustmentAmount__c,Apttus_QPConfig__NetPrice__c,
+                                                           Apttus_QPConfig__AdjustedPrice__c,Apttus_QPConfig__DeltaPrice__c,Apttus_QPConfig__ExtendedPrice__c,Apttus_QPConfig__BaseExtendedPrice__c,Apttus_QPConfig__NetUnitPrice__c,
+                                                           NationalListPricebyEAFullDecimal__c,Apttus_QPConfig__BasePriceOverride__c,Apttus_QPConfig__Quantity2__c,Apttus_QPConfig__AdjustmentType__c,DiscountAgainstNLP__c,
+                                                           Apttus_QPConfig__BaseCostOverride__c,ContractPrice__c,Apttus_Proposal__Product__r.LOTSProductHierarchy__c,TargetPrice__c,Apttus_QPConfig__BasePrice__c,BasePriceDefinedNbOfDecimalPlaces__c,NetAdjustmentDefinedNbOfDecimalPlaces__c,
+                                                           NetPriceDefinedNbOfDecimalPlaces__c,NetPriceInclVATDefinedNbOfDecimalPlaces__c,NationalListPricebyEAFullSeparator__c,RevisedDiscountagainstNLPSeparator__c,RevisedDiscountagainstNLP__c,
+                                                           National_LPDefinedNbOfDecimalPlaces__c,VatRateSeparator__c,DisconActualLP__c
+                                                           from Apttus_Proposal__Proposal_Line_Item__c where Apttus_QPConfig__PriceListItemId__c in : priceListMap.keyset() AND LastModifiedDate = TODAY AND ProductHierarchy__c=false AND DisconActualLP__c=True AND Apttus_QPConfig__AdjustmentType__c!='% Markup' AND ContractPrice__c=null]){
+                                                               
+                                                               contractPLI=cli1.Apttus_Proposal__Proposal__r.Quote_Number__c+''+cli1.Apttus_Proposal__Product__c;
+                                                               proposalId.add(cli1.Apttus_Proposal__Proposal__c);
+                                                               contractPLIData.put(contractPLI,cli1);
+                                                               contractNumbers.add(cli1.Apttus_Proposal__Proposal__r.Quote_Number__c);
+                                                               priceListItemId.add(cli1.Apttus_QPConfig__PriceListItemId__c);
+                                                               keyID=cli1.Apttus_Proposal__Proposal__c+''+cli1.Apttus_Proposal__Product__c+''+cli1.Apttus_QPConfig__AdjustmentType__c;
+                                                               propListMap.put(keyID,cli1);
+                                                           }
+        System.debug('priceListItemId:'+priceListItemId);
+        System.debug('keyID:'+keyID);
+        System.debug('propListMap:'+propListMap);*/
+        //Getting pricelist items based on contract numbers and adding price list items
+        for(Apttus_Config2__PriceList__c priceList : [select id,Apttus_Config2__ContractNumber__c from Apttus_Config2__PriceList__c where Apttus_Config2__ContractNumber__c IN:contractNumbers]){
+            contractPriceListId.add(priceList.Id); 
+        }
+        system.debug('contractPriceListId:'+contractPriceListId);
+        //Updating contract list items with proposal line items
+        for(Apttus_Config2__PriceListItem__c cpliSet :[select id,Apttus_Config2__ProductId__c,Apttus_Config2__PriceListId__r.Apttus_Config2__ContractNumber__c,Apttus_Config2__PriceListId__c,Apttus_Config2__ContractPrice__c,Apttus_Config2__ContractItemNumber__c,LastModifiedDate,TargetPrice__c,Apttus_Config2__ListPrice__c,CreatedDate from Apttus_Config2__PriceListItem__c where Apttus_Config2__PriceListId__c IN:contractPriceListId]){
+            String cpliSetMap = cpliSet.Apttus_Config2__PriceListId__r.Apttus_Config2__ContractNumber__c+''+cpliSet.Apttus_Config2__ProductId__c;
+            System.debug('cpliSetMap:'+cpliSetMap);
+            System.debug('Contract##'+contractPLIData);
+            System.debug('Number##'+cpliSet.Apttus_Config2__ContractItemNumber__c);
+            //System.debug('Name##'+contractPLIData.get(cpliSetMap).Name);
+            Apttus_Proposal__Proposal_Line_Item__c pliData=contractPLIData.get(cpliSetMap);
+            if(pliData!=null){
+                String proposalName=contractPLIData.get(cpliSetMap).Name;
+                System.debug('proposalName:'+proposalName);
+                
+                if(pliData.Name==cpliSet.Apttus_Config2__ContractItemNumber__c){
+                    cpliSet.Apttus_Config2__ContractPrice__c=contractPLIData.get(cpliSetMap).Apttus_QPConfig__NetUnitPrice__c;
+                    cpliSet.TargetPrice__c=contractPLIData.get(cpliSetMap).TargetPrice__c;
+                    cpliSet.Apttus_Config2__ListPrice__c=contractPLIData.get(cpliSetMap).Apttus_QPConfig__ListPrice__c;
+                }
+                
+                if((cpliSet.Apttus_Config2__ContractItemNumber__c==null)&&(cpliSet.Apttus_Config2__ProductId__c==contractPLIData.get(cpliSetMap).Apttus_Proposal__Product__c)){
+                    cpliSet.Apttus_Config2__ContractPrice__c=contractPLIData.get(cpliSetMap).Apttus_QPConfig__NetPrice__c;
+                    cpliSet.Apttus_Config2__ListPrice__c=contractPLIData.get(cpliSetMap).Apttus_QPConfig__ListPrice__c;
+                    cpliSet.TargetPrice__c=contractPLIData.get(cpliSetMap).TargetPrice__c;
+                }
+            }
+            contractList.add(cpliSet);
+            
+        }
+        
+        System.debug('contractList:'+contractList.size());
+       /* if(!contractList.isEmpty()){ 
+            update contractList;
+        }*/
+        
+        System.debug('alibeforeforloop');
+        //Updating Agreement line items based on the proposal line items when List Price and NationalListPriceByEA is different
+        for(Apttus__AgreementLineItem__c ali:[select id,Apttus__AgreementId__c,Apttus__AgreementId__r.Apttus_QPComply__RelatedProposalId__c,Apttus_CMConfig__PriceListItemId__c,DiscountAgainstNLP__c,Apttus__ListPrice__c,Apttus__NetPrice__c,Apttus_CMConfig__AdjustedPrice__c,
+                                              Apttus_CMConfig__DeltaPrice__c,Apttus__ExtendedPrice__c,Apttus_CMConfig__BaseExtendedPrice__c,Apttus_CMConfig__NetUnitPrice__c,Apttus_CMConfig__BasePrice__c,
+                                              NationalListPriceByEA__c,BasePriceDefinedNbOfDecimalPlaces__c,NetAdjustmentDefinedNbOfDecimalPlaces__c,NetPriceDefinedNbOfDecimalPlaces__c,NetPriceInclVATDefinedNbOfDecimalPlaces__c,
+                                              TargetPrice__c,QuantityDefinedNbOfDecimalPlaces__c,Apttus_CMConfig__AdjustmentAmount__c,Apttus_CMConfig__AdjustmentType__c,Apttus__ProductId__c,Apttus__Quantity__c,NationalListPricebyEAFullSeparator__c,
+                                              Revised_Discount_against_NLPSeparator__c,VatRateSeparator__c,NationalListPricebyEAFullDecimal__c,National_LPDefinedNbOfDecimalPlaces__c,Product_Hierarchy__c,DisconActualLP__c,ContractPrice__c 
+                                              from Apttus__AgreementLineItem__c where Apttus_CMConfig__PriceListItemId__c in : priceListItemId AND DisconActualLP__c=True AND Product_Hierarchy__c=False AND Apttus_CMConfig__AdjustmentType__c !='% Markup' AND ContractPrice__c =null]){  
+                                                  agliValidation=ali.Apttus__AgreementId__r.Apttus_QPComply__RelatedProposalId__c+''+ali.Apttus__ProductId__c+''+ali.Apttus_CMConfig__AdjustmentType__c;
+                                                  Apttus_Proposal__Proposal_Line_Item__c pliNullCheck   =propListMap.get(agliValidation);
+                                                  if(pliNullCheck!=null){
+                                                      if((ali.Apttus_CMConfig__AdjustmentAmount__c!=null)&&(ali.Apttus__Quantity__c==propListMap.get(agliValidation).Apttus_QPConfig__Quantity2__c) && (ali.Apttus_CMConfig__AdjustmentAmount__c==propListMap.get(agliValidation).Apttus_QPConfig__AdjustmentAmount__c) && (ali.Apttus_CMConfig__AdjustmentType__c=='Base Price Override')&&(ali.Apttus__ProductId__c==propListMap.get(agliValidation).Apttus_Proposal__Product__c)){
+                                                          ali.DiscountAgainstNLP__c =propListMap.get(agliValidation).DiscountAgainstNLP__c;
+                                                          ali.Apttus__ListPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__ListPrice__c;
+                                                          ali.Apttus__NetPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__NetPrice__c;
+                                                          ali.Apttus_CMConfig__AdjustedPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__AdjustedPrice__c;
+                                                          ali.Apttus_CMConfig__DeltaPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__DeltaPrice__c;
+                                                          ali.Apttus__ExtendedPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__ExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__BaseExtendedPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__BaseExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__NetUnitPrice__c =propListMap.get(agliValidation).Apttus_QPConfig__NetUnitPrice__c;
+                                                          ali.Apttus_CMConfig__BasePrice__c =propListMap.get(agliValidation).Apttus_QPConfig__BasePrice__c;
+                                                          ali.NationalListPriceByEA__c =propListMap.get(agliValidation).NationalListPriceByEA__c;
+                                                          ali.BasePriceDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).BasePriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetAdjustmentDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).NetAdjustmentDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceDefinedNbOfDecimalPlaces__c=propListMap.get(agliValidation).NetPriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceInclVATDefinedNbOfDecimalPlaces__c=propListMap.get(agliValidation).NetPriceInclVATDefinedNbOfDecimalPlaces__c;
+                                                          ali.TargetPrice__c =propListMap.get(agliValidation).TargetPrice__c;
+                                                          ali.NationalListPricebyEAFullSeparator__c =propListMap.get(agliValidation).NationalListPricebyEAFullSeparator__c;
+                                                          ali.Revised_Discount_against_NLPSeparator__c =propListMap.get(agliValidation).RevisedDiscountagainstNLPSeparator__c;
+                                                          ali.NationalListPricebyEAFullDecimal__c  =propListMap.get(agliValidation).NationalListPricebyEAFullDecimal__c;
+                                                          ali.National_LPDefinedNbOfDecimalPlaces__c   =propListMap.get(agliValidation).National_LPDefinedNbOfDecimalPlaces__c;
+                                                      }
+                                                      if((ali.Apttus_CMConfig__AdjustmentAmount__c==null)&&(ali.Apttus__Quantity__c==propListMap.get(agliValidation).Apttus_QPConfig__Quantity2__c) && (ali.Apttus_CMConfig__AdjustmentType__c=='Base Price Override')&&(ali.Apttus__ProductId__c==propListMap.get(agliValidation).Apttus_Proposal__Product__c)){
+                                                          ali.DiscountAgainstNLP__c  =propListMap.get(agliValidation).DiscountAgainstNLP__c;
+                                                          ali.Apttus__ListPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__ListPrice__c;
+                                                          ali.Apttus__NetPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__NetPrice__c;
+                                                          ali.Apttus_CMConfig__AdjustedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__AdjustedPrice__c;
+                                                          ali.Apttus_CMConfig__DeltaPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__DeltaPrice__c;
+                                                          ali.Apttus__ExtendedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__ExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__BaseExtendedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__BaseExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__NetUnitPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__NetUnitPrice__c;
+                                                          ali.Apttus_CMConfig__BasePrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__BasePrice__c;
+                                                          ali.NationalListPriceByEA__c  =propListMap.get(agliValidation).NationalListPriceByEA__c;
+                                                          ali.BasePriceDefinedNbOfDecimalPlaces__c  =propListMap.get(agliValidation).BasePriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetAdjustmentDefinedNbOfDecimalPlaces__c  =propListMap.get(agliValidation).NetAdjustmentDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).NetPriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceInclVATDefinedNbOfDecimalPlaces__c=propListMap.get(agliValidation).NetPriceInclVATDefinedNbOfDecimalPlaces__c;
+                                                          ali.TargetPrice__c  =propListMap.get(agliValidation).TargetPrice__c;
+                                                          ali.NationalListPricebyEAFullSeparator__c =propListMap.get(agliValidation).NationalListPricebyEAFullSeparator__c;
+                                                          ali.Revised_Discount_against_NLPSeparator__c =propListMap.get(agliValidation).RevisedDiscountagainstNLPSeparator__c;
+                                                          ali.NationalListPricebyEAFullDecimal__c =propListMap.get(agliValidation).NationalListPricebyEAFullDecimal__c;
+                                                          ali.National_LPDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).National_LPDefinedNbOfDecimalPlaces__c;
+                                                          
+                                                      }
+                                                      if((ali.Apttus_CMConfig__AdjustmentAmount__c==null)&&(ali.Apttus__Quantity__c==propListMap.get(agliValidation).Apttus_QPConfig__Quantity2__c) && (ali.Apttus_CMConfig__AdjustmentType__c=='% Discount')&&(ali.Apttus__ProductId__c==propListMap.get(agliValidation).Apttus_Proposal__Product__c)){
+                                                          ali.DiscountAgainstNLP__c  =propListMap.get(agliValidation).DiscountAgainstNLP__c;
+                                                          ali.Apttus__ListPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__ListPrice__c;
+                                                          ali.Apttus__NetPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__NetPrice__c;
+                                                          ali.Apttus_CMConfig__AdjustedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__AdjustedPrice__c;
+                                                          ali.Apttus_CMConfig__DeltaPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__DeltaPrice__c;
+                                                          ali.Apttus__ExtendedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__ExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__BaseExtendedPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__BaseExtendedPrice__c;
+                                                          ali.Apttus_CMConfig__NetUnitPrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__NetUnitPrice__c;
+                                                          ali.Apttus_CMConfig__BasePrice__c  =propListMap.get(agliValidation).Apttus_QPConfig__BasePrice__c;
+                                                          ali.NationalListPriceByEA__c  =propListMap.get(agliValidation).NationalListPriceByEA__c;
+                                                          ali.BasePriceDefinedNbOfDecimalPlaces__c  =propListMap.get(agliValidation).BasePriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetAdjustmentDefinedNbOfDecimalPlaces__c  =propListMap.get(agliValidation).NetAdjustmentDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).NetPriceDefinedNbOfDecimalPlaces__c;
+                                                          ali.NetPriceInclVATDefinedNbOfDecimalPlaces__c=propListMap.get(agliValidation).NetPriceInclVATDefinedNbOfDecimalPlaces__c;
+                                                          ali.TargetPrice__c  =propListMap.get(agliValidation).TargetPrice__c;
+                                                          ali.NationalListPricebyEAFullSeparator__c =propListMap.get(agliValidation).NationalListPricebyEAFullSeparator__c;
+                                                          ali.Revised_Discount_against_NLPSeparator__c =propListMap.get(agliValidation).RevisedDiscountagainstNLPSeparator__c;
+                                                          //ali.RevisedDiscountagainstNLP__c =propListMap.get(agliValidation).RevisedDiscountagainstNLP__c;
+                                                          ali.NationalListPricebyEAFullDecimal__c =propListMap.get(agliValidation).NationalListPricebyEAFullDecimal__c;
+                                                          ali.National_LPDefinedNbOfDecimalPlaces__c =propListMap.get(agliValidation).National_LPDefinedNbOfDecimalPlaces__c;
+                                                          
+                                                      }
+                                                  }
+                                                  agreementID.add(ali.Apttus__AgreementId__c);
+                                                  aliUpdate.add(ali);
+                                              }
+        
+        system.debug('agliValidation:'+agliValidation); 
+        System.debug('agreementID:'+agreementID);
+        System.debug('aliUpdate:'+aliUpdate.size());
+        
+        if(!aliUpdate.isEmpty()){ 
+            //update aliUpdate;
+        }
+        //Updating Sent To ERP Date with current date time plus 6 hours based on status category and Status fields.
+        for(Apttus__APTS_Agreement__c ag:[select id,SentToERPDate__c,Apttus__Contract_End_Date__c,Apttus__Status_Category__c,Apttus__Status__c from Apttus__APTS_Agreement__c where Id IN:agreementID AND Apttus__Contract_End_Date__c > Today]){
+            if(((ag.Apttus__Status_Category__c == 'In Effect') || (ag.Apttus__Status_Category__c == 'Terminated') || (ag.Apttus__Status_Category__c == 'Expired')) && ((ag.Apttus__Status__c == 'Activated') || (ag.Apttus__Status__c == 'Terminated') || (ag.Apttus__Status__c == 'Expired') || (ag.Apttus__Status__c == 'In Effect'))){
+                ag.SentToERPDate__c =  System.Now();
+				ag.SentToERPDate__c = ag.SentToERPDate__c.addHours(6);
+            }
+            agreementList.add(ag);
+        }
+        System.debug('agreementList:'+agreementList.size());
+        if(!agreementList.isEmpty()){
+            //update agreementList;
+        }
+  
+    } 
+	//Sending email notification to the support team when batch job fails
+    public void finish(Database.BatchableContext BC){
+        
+        AsyncApexJob a = [Select Id,Status,ExtendedStatus,NumberOfErrors,JobItemsProcessed,
+        TotalJobItems,CreatedBy.Email from AsyncApexJob where Id =:BC.getJobId()];
+        
+          if(a.Status=='Failed' || a.NumberOfErrors > 0 || test.isRunningTest()){
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+            String[] toAddresses = new String[] {'philip-raju.bontha@capgemini.com'};
+            mail.setToAddresses(toAddresses);
+            mail.setSubject('Match Merge Batch ' + a.Status);
+            mail.setPlainTextBody('records processed ' + a.TotalJobItems +
+           'with '+ a.NumberOfErrors + ' failures.');
+            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+          }
+    }
+}
